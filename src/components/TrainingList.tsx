@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 interface TrainingListProps {
   trainings: Training[];
   userId: string;
-  onUpdateTraining: (id: string, field: keyof Training, value: any) => void;
+  onUpdateTraining: (id: string, fieldOrFields: keyof Training | Partial<Training>, value?: any) => void;
   onDeleteTraining: (id: string) => void;
   onAddTraining: (training: Omit<Training, 'id' | 'userId'>) => void;
 }

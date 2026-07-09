@@ -234,12 +234,16 @@ export default function App() {
     }
   };
 
-  // Action: Update training properties
-  const handleUpdateTraining = async (id: string, field: keyof Training, value: any) => {
+  // Action: Update training properties (supports single field or multiple fields via object)
+  const handleUpdateTraining = async (id: string, fieldOrFields: keyof Training | Partial<Training>, value?: any) => {
     try {
-      await updateDoc(doc(db, 'trainings', id), {
-        [field]: value
-      });
+      if (typeof fieldOrFields === 'object') {
+        await updateDoc(doc(db, 'trainings', id), fieldOrFields);
+      } else {
+        await updateDoc(doc(db, 'trainings', id), {
+          [fieldOrFields]: value
+        });
+      }
     } catch (err) {
       console.error('Error updating training in Firestore:', err);
     }
