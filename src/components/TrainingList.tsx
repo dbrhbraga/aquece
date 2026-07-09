@@ -32,9 +32,9 @@ export default function TrainingList({
   
   // Add Training Form state
   const [isAdding, setIsAdding] = useState(false);
-  const [week, setWeek] = useState<number>(1);
+  const [week, setWeek] = useState<number | string>(1);
   const [description, setDescription] = useState('');
-  const [plannedKm, setPlannedKm] = useState<number>(8);
+  const [plannedKm, setPlannedKm] = useState<number | string>(8);
   const [dayOfWeek, setDayOfWeek] = useState('Terça-feira');
   const [notes, setNotes] = useState('');
 
@@ -77,12 +77,14 @@ export default function TrainingList({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim() || plannedKm <= 0 || week <= 0) return;
+    const parsedPlannedKm = parseFloat(plannedKm as string);
+    const parsedWeek = parseInt(week as string);
+    if (!description.trim() || isNaN(parsedPlannedKm) || parsedPlannedKm <= 0 || isNaN(parsedWeek) || parsedWeek <= 0) return;
 
     onAddTraining({
-      week,
+      week: parsedWeek,
       description: description.trim(),
-      plannedKm,
+      plannedKm: parsedPlannedKm,
       completedKm: 0,
       done: false,
       dayOfWeek,
@@ -203,7 +205,7 @@ export default function TrainingList({
                     min="1"
                     required
                     value={week}
-                    onChange={(e) => setWeek(parseInt(e.target.value) || 1)}
+                    onChange={(e) => setWeek(e.target.value)}
                     className="w-full px-3.5 py-3 bg-[#0F1113] border border-white/20 rounded-none focus:outline-none focus:border-brand-neon focus:ring-1 focus:ring-brand-neon/30 text-sm text-white font-mono"
                   />
                 </div>
@@ -246,7 +248,7 @@ export default function TrainingList({
                     min="0.1"
                     required
                     value={plannedKm}
-                    onChange={(e) => setPlannedKm(parseFloat(e.target.value) || 1)}
+                    onChange={(e) => setPlannedKm(e.target.value)}
                     className="w-full px-3.5 py-3 bg-[#0F1113] border border-white/20 rounded-none focus:outline-none focus:border-brand-neon focus:ring-1 focus:ring-brand-neon/30 text-sm text-white font-mono"
                   />
                 </div>
