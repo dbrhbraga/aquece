@@ -86,6 +86,7 @@ export default function App() {
           const defaultAthleteId = `user-athlete-${currentUser.uid}`;
           await setDoc(doc(db, 'users', defaultAthleteId), {
             name: currentUser.displayName || 'Minha Planilha',
+            type: 'atleta',
             avatarColor: 'from-rose-500 to-pink-600',
             ownerId: currentUser.uid
           });
@@ -169,18 +170,21 @@ export default function App() {
     }
   }, [currentUser, selectedUserId]);
 
-  // Action: Add new athlete user
-  const handleAddUser = async (name: string) => {
+  // Action: Add new running group or athlete profile
+  const handleAddUser = async (name: string, type: 'grupo' | 'atleta' = 'atleta') => {
     if (!currentUser) return;
-    const randomGradient = AVATAR_GRADIENTS[Math.floor(Math.random() * AVATAR_GRADIENTS.length)];
+    const randomGradient = type === 'grupo' 
+      ? 'from-indigo-600 to-purple-800' 
+      : AVATAR_GRADIENTS[Math.floor(Math.random() * AVATAR_GRADIENTS.length)];
     const newUserId = `user-${Date.now()}`;
     try {
       await setDoc(doc(db, 'users', newUserId), {
         name,
+        type,
         avatarColor: randomGradient,
         ownerId: currentUser.uid
       });
-      setSelectedUserId(newUserId); // auto-select newly created athlete
+      setSelectedUserId(newUserId); // auto-select newly created item
     } catch (err) {
       console.error('Error adding user to Firestore:', err);
     }
@@ -206,6 +210,15 @@ export default function App() {
       });
     } catch (err) {
       console.error('Error deleting user from Firestore:', err);
+    }
+  };
+
+  // Action: Update user profile (like targetGoal or weeklyVolumeTarget)
+  const handleUpdateUser = async (userId: string, updatedFields: Partial<User>) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), updatedFields);
+    } catch (err) {
+      console.error('Error updating user profile in Firestore:', err);
     }
   };
 
@@ -304,7 +317,7 @@ export default function App() {
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 self-start md:self-center">
             {/* Core Tab Switches - High Contrast Mono Style */}
-            <div className="flex bg-white/5 p-1 border border-white/10">
+            <div className="flex bg-white/5 p-1 border border-white/10 flex-wrap">
               <button
                 id="tab-planilha-btn"
                 onClick={() => setActiveTab('planilha')}
@@ -364,12 +377,13 @@ export default function App() {
           onSelectUser={setSelectedUserId}
           onAddUser={handleAddUser}
           onDeleteUser={handleDeleteUser}
+          onUpdateUser={handleUpdateUser}
         />
 
 
         {/* Dynamic Tab Switching Content rendering */}
         <div className="mt-4">
-          {activeTab === 'planilha' ? (
+          {activeTab === 'planilha' && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -383,7 +397,8 @@ export default function App() {
                 onAddTraining={handleAddTraining}
               />
             </motion.div>
-          ) : (
+          )}
+          {activeTab === 'graficos' && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}

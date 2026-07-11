@@ -3,6 +3,9 @@ export interface User {
   name: string;
   avatarColor: string;
   ownerId?: string;
+  type?: 'grupo' | 'atleta';
+  targetGoal?: string;
+  weeklyVolumeTarget?: number;
 }
 
 export interface Training {

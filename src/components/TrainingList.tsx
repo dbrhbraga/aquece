@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Training } from '../types';
 import TrainingItem from './TrainingItem';
-import { Plus, Filter, Calendar, Award, ChevronDown, Sparkles } from 'lucide-react';
+import { Plus, Filter, Calendar, Award, ChevronDown, Sparkles, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface TrainingListProps {
@@ -29,6 +29,7 @@ export default function TrainingList({
 }: TrainingListProps) {
   // Filter states
   const [selectedWeekFilter, setSelectedWeekFilter] = useState<string>('all');
+  const [sharedWeekNum, setSharedWeekNum] = useState<number | null>(null);
   
   // Add Training Form state
   const [isAdding, setIsAdding] = useState(false);
@@ -37,6 +38,36 @@ export default function TrainingList({
   const [plannedKm, setPlannedKm] = useState<number | string>(8);
   const [dayOfWeek, setDayOfWeek] = useState('Terça-feira');
   const [notes, setNotes] = useState('');
+
+  // Helper to copy and share week training spreadsheet
+  const handleShareWeek = (weekNum: number, workouts: Training[]) => {
+    const title = `*AQUECE* | 📅 *Planilha de Treinos - Semana ${weekNum}*\n`;
+    const subtitle = `Volume Planejado: *${getWeekStats(weekNum).planned.toFixed(1)} km*\n\n`;
+    
+    // Sort workouts by day of week if possible or just map them
+    const sortedDays = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+    const sortedWorkouts = [...workouts].sort((a, b) => {
+      return sortedDays.indexOf(a.dayOfWeek) - sortedDays.indexOf(b.dayOfWeek);
+    });
+
+    const list = sortedWorkouts.map((w) => {
+      const statusIcon = w.done ? '✅' : '🏃';
+      const notesStr = w.notes ? `\n   _Obs: ${w.notes}_` : '';
+      return `${statusIcon} *${w.dayOfWeek}*: ${w.description} (${w.plannedKm}k previsto)${notesStr}`;
+    }).join('\n\n');
+
+    const footer = `\n\n_Bons treinos! Gerado no AQUECE Performance Lab._`;
+    const textToCopy = `${title}${subtitle}${list}${footer}`;
+
+    navigator.clipboard.writeText(textToCopy)
+      .then(() => {
+        setSharedWeekNum(weekNum);
+        setTimeout(() => setSharedWeekNum(null), 2500);
+      })
+      .catch((err) => {
+        console.error('Failed to copy text:', err);
+      });
+  };
 
   // Filter trainings belonging to active user
   const userTrainings = trainings.filter((t) => t.userId === userId);
@@ -333,18 +364,34 @@ export default function TrainingList({
                 <div key={weekNum} className="space-y-4" id={`week-group-${weekNum}`}>
                   {/* Week Header Banner */}
                   <div className="bg-[#16181A] text-white border border-white/10 rounded-none p-6 shadow-xl animate-fade-in">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-2">
-                          <Award size={22} className="text-brand-neon" />
-                          <span>Semana {weekNum}</span>
-                        </h3>
-                        <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40 mt-1">
-                          Consolidado semanal de volume de corrida
-                        </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div className="flex items-start justify-between sm:justify-start gap-4 w-full sm:w-auto">
+                        <div>
+                          <h3 className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-2">
+                            <Award size={22} className="text-brand-neon" />
+                            <span>Semana {weekNum}</span>
+                          </h3>
+                          <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40 mt-1">
+                            Consolidado semanal de volume de corrida
+                          </p>
+                        </div>
+                        
+                        {/* Share Week Button */}
+                        <button
+                          onClick={() => handleShareWeek(weekNum, weekWorkouts)}
+                          className={`p-2 border transition-all flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-widest cursor-pointer ${
+                            sharedWeekNum === weekNum
+                              ? 'border-brand-neon/40 bg-brand-neon/10 text-brand-neon'
+                              : 'border-white/10 hover:border-brand-neon hover:bg-brand-neon/5 text-white/50 hover:text-brand-neon'
+                          }`}
+                          title="Copiar planilha formatada para colar no WhatsApp"
+                        >
+                          <Share2 size={12} className={sharedWeekNum === weekNum ? 'text-brand-neon animate-bounce' : ''} />
+                          <span>{sharedWeekNum === weekNum ? 'Copiado!' : 'WhatsApp'}</span>
+                        </button>
                       </div>
 
-                      <div className="flex flex-col sm:items-end gap-1.5">
+                      <div className="flex flex-col sm:items-end gap-1.5 w-full sm:w-auto">
                         <div className="flex items-baseline gap-1.5">
                           <span className="text-2xl font-black italic tracking-tighter text-brand-neon">
                             {stats.completed.toFixed(1)}k
