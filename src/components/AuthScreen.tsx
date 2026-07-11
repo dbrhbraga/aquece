@@ -3,7 +3,9 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   sendPasswordResetEmail,
-  updateProfile 
+  updateProfile,
+  GoogleAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { doc, setDoc } from 'firebase/firestore';
@@ -92,8 +94,36 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
         return 'A senha é muito fraca. Escolha uma senha de pelo menos 6 caracteres.';
       case 'auth/invalid-credential':
         return 'Credenciais inválidas. Verifique seu e-mail e senha.';
+      case 'auth/operation-not-allowed':
+        return 'O provedor de login com e-mail/senha não está ativado no Firebase Console. Ative-o em Authentication > Sign-in method ou utilize o botão "Entrar com Google" abaixo.';
       default:
-        return 'Ocorreu um erro ao processar sua solicitação. Tente novamente.';
+        return `Ocorreu um erro ao processar sua solicitação (Código: ${code}). Se o erro persistir, tente o login com Google.`;
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsLoading(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
+      // Criar/atualizar perfil do atleta de forma segura
+      const defaultAthleteId = `user-athlete-${user.uid}`;
+      await setDoc(doc(db, 'users', defaultAthleteId), {
+        name: user.displayName || 'Atleta Anônimo',
+        avatarColor: 'from-rose-500 to-pink-600',
+        ownerId: user.uid
+      }, { merge: true });
+
+      onAuthSuccess();
+    } catch (err: any) {
+      console.error('Google login error:', err);
+      setError(getFirebaseErrorMessage(err.code || err.message));
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -492,6 +522,28 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                       </button>
                     </form>
 
+                    <div className="relative my-5 flex items-center justify-center">
+                      <div className="absolute inset-x-0 h-px bg-white/5" />
+                      <span className="relative px-3 bg-[#0F1113] text-[9px] font-mono text-white/30 uppercase tracking-widest">
+                        ou
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={isLoading}
+                      className="w-full py-3 text-xs font-mono font-black text-white bg-white/[0.02] hover:bg-white/[0.06] border border-white/10 rounded-none cursor-pointer uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                    >
+                      <svg className="w-4 h-4 text-white" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.227-3.11C18.28 1.95 15.45 1 12.24 1 5.48 1 0 6.48 0 13.2s5.48 12.2 12.24 12.2c7.055 0 11.75-4.96 11.75-11.96 0-.813-.087-1.43-.195-2.155H12.24z"
+                        />
+                      </svg>
+                      <span>ENTRAR COM GOOGLE</span>
+                    </button>
+
                     <div className="mt-8 pt-6 border-t border-white/5 text-center">
                       <p className="text-xs text-white/40 font-mono">
                         NÃO TEM CONTA?{' '}
@@ -634,6 +686,28 @@ export default function AuthScreen({ onAuthSuccess }: AuthScreenProps) {
                         )}
                       </button>
                     </form>
+
+                    <div className="relative my-5 flex items-center justify-center">
+                      <div className="absolute inset-x-0 h-px bg-white/5" />
+                      <span className="relative px-3 bg-[#0F1113] text-[9px] font-mono text-white/30 uppercase tracking-widest">
+                        ou
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogin}
+                      disabled={isLoading}
+                      className="w-full py-3 text-xs font-mono font-black text-white bg-white/[0.02] hover:bg-white/[0.06] border border-white/10 rounded-none cursor-pointer uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                    >
+                      <svg className="w-4 h-4 text-white" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l3.227-3.11C18.28 1.95 15.45 1 12.24 1 5.48 1 0 6.48 0 13.2s5.48 12.2 12.24 12.2c7.055 0 11.75-4.96 11.75-11.96 0-.813-.087-1.43-.195-2.155H12.24z"
+                        />
+                      </svg>
+                      <span>CADASTRAR COM GOOGLE</span>
+                    </button>
 
                     <div className="mt-8 pt-6 border-t border-white/5 text-center">
                       <p className="text-xs text-white/40 font-mono">
