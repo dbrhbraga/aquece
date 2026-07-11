@@ -2,6 +2,7 @@ export interface User {
   id: string;
   name: string;
   avatarColor: string;
+  ownerId?: string;
 }
 
 export interface Training {
@@ -14,4 +15,5 @@ export interface Training {
   completedKm: number;
   done: boolean;
   notes?: string;
+  ownerId?: string;
 }

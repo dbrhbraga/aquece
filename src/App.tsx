@@ -4,7 +4,8 @@ import { INITIAL_USERS, INITIAL_TRAININGS } from './data';
 import UserSelector from './components/UserSelector';
 import TrainingList from './components/TrainingList';
 import StatsDashboard from './components/StatsDashboard';
-import { Activity, Calendar, BarChart3, Info } from 'lucide-react';
+import AuthScreen from './components/AuthScreen';
+import { Activity, Calendar, BarChart3, Info, LogOut } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
   collection, 
@@ -12,9 +13,12 @@ import {
   onSnapshot, 
   setDoc, 
   deleteDoc, 
-  updateDoc 
+  updateDoc,
+  query,
+  where
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { db, auth } from './firebase';
 
 const LOCAL_STORAGE_ACTIVE_USER_KEY = 'corrida_tracker_active_user_v1';
 
@@ -29,79 +33,78 @@ const AVATAR_GRADIENTS = [
 ];
 
 export default function App() {
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
   // App State - Loaded immediately to eliminate loading delay
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
-  const [selectedUserId, setSelectedUserId] = useState<string>(() => {
-    return localStorage.getItem(LOCAL_STORAGE_ACTIVE_USER_KEY) || 'user-deborah';
-  });
-  const [trainings, setTrainings] = useState<Training[]>(INITIAL_TRAININGS);
+  const [users, setUsers] = useState<User[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [trainings, setTrainings] = useState<Training[]>([]);
   const [activeTab, setActiveTab] = useState<'planilha' | 'graficos'>('planilha');
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Force exactly 2 seconds delay on the loading screen for a smooth transition
+  // 1. Observe Authentication changes
   useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setIsAuthChecking(false);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Force exactly 2 seconds delay on the loading screen for a smooth transition once authenticated
+  useEffect(() => {
+    if (!currentUser) return;
+    setIsLoaded(false);
     const timer = setTimeout(() => {
       setIsLoaded(true);
     }, 2000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [currentUser]);
 
-  // Load state and listen to Firestore changes on mount
+  // Load state and listen to Firestore changes on mount (scoped to currentUser)
   useEffect(() => {
-    // 1. Subscribe to Users
-    const unsubscribeUsers = onSnapshot(collection(db, 'users'), async (snapshot) => {
+    if (!currentUser) {
+      setUsers([]);
+      setTrainings([]);
+      setSelectedUserId('');
+      return;
+    }
+
+    // 1. Subscribe to Users belonging to the current user
+    const qUsers = query(collection(db, 'users'), where('ownerId', '==', currentUser.uid));
+    const unsubscribeUsers = onSnapshot(qUsers, async (snapshot) => {
       const usersList: User[] = [];
       snapshot.forEach((doc) => {
         usersList.push({ id: doc.id, ...doc.data() } as User);
       });
 
-      const oldUserIds = ['user-1', 'user-2', 'user-3', 'user-sarah'];
-      const hasOldUsers = usersList.some(u => oldUserIds.includes(u.id));
-
-      if (hasOldUsers || usersList.length === 0) {
-        console.log('Purging old model users and ensuring Déborah Braga exists...');
+      if (usersList.length === 0) {
+        console.log('No athlete profiles found for this user. Creating default profile...');
         try {
-          // Deletar usuários antigos do Firestore em paralelo
-          const deleteUserPromises = usersList
-            .filter(u => oldUserIds.includes(u.id))
-            .map(u => deleteDoc(doc(db, 'users', u.id)));
-          await Promise.all(deleteUserPromises);
-
-          // Criar Déborah Braga no Firestore
-          await setDoc(doc(db, 'users', 'user-deborah'), {
-            name: 'Déborah Braga',
-            avatarColor: 'from-rose-500 to-pink-600'
+          const defaultAthleteId = `user-athlete-${currentUser.uid}`;
+          await setDoc(doc(db, 'users', defaultAthleteId), {
+            name: currentUser.displayName || 'Minha Planilha',
+            avatarColor: 'from-rose-500 to-pink-600',
+            ownerId: currentUser.uid
           });
-
-          // Seeding initial trainings for Déborah Braga in parallel
-          const seedTrainingPromises = INITIAL_TRAININGS.map(t => 
-            setDoc(doc(db, 'trainings', t.id), {
-              userId: 'user-deborah',
-              week: t.week,
-              description: t.description,
-              dayOfWeek: t.dayOfWeek,
-              plannedKm: t.plannedKm,
-              completedKm: t.completedKm,
-              done: t.done,
-              notes: t.notes || ''
-            })
-          );
-          await Promise.all(seedTrainingPromises);
         } catch (err) {
-          console.error('Error migrating or seeding data to Firestore:', err);
+          console.error('Error creating default athlete profile:', err);
         }
       } else {
         setUsers(usersList);
         
         // Select active user
-        const storedActiveUser = localStorage.getItem(LOCAL_STORAGE_ACTIVE_USER_KEY);
+        const storedActiveUserKey = `${LOCAL_STORAGE_ACTIVE_USER_KEY}_${currentUser.uid}`;
+        const storedActiveUser = localStorage.getItem(storedActiveUserKey);
+        
         setSelectedUserId((currentId) => {
           if (!currentId || !usersList.some(u => u.id === currentId)) {
             if (storedActiveUser && usersList.some(u => u.id === storedActiveUser)) {
               return storedActiveUser;
             }
-            const deborahObj = usersList.find(u => u.id === 'user-deborah' || u.name === 'Déborah Braga');
-            return deborahObj ? deborahObj.id : (usersList[0]?.id || '');
+            return usersList[0]?.id || '';
           }
           return currentId;
         });
@@ -110,52 +113,40 @@ export default function App() {
       console.error('Error listening to users collection:', error);
     });
 
-    // 2. Subscribe to Trainings and purge old orphaned trainings in parallel
-    const unsubscribeTrainings = onSnapshot(collection(db, 'trainings'), async (snapshot) => {
+    // 2. Subscribe to Trainings belonging to the current user
+    const qTrainings = query(collection(db, 'trainings'), where('ownerId', '==', currentUser.uid));
+    const unsubscribeTrainings = onSnapshot(qTrainings, async (snapshot) => {
       const trainingsList: Training[] = [];
-      const oldUserIds = ['user-1', 'user-2', 'user-3', 'user-sarah'];
-      const trainingsToDelete: string[] = [];
-
       snapshot.forEach((doc) => {
-        const data = doc.data();
-        if (oldUserIds.includes(data.userId)) {
-          trainingsToDelete.push(doc.id);
-        } else {
-          trainingsList.push({ id: doc.id, ...data } as Training);
-        }
+        trainingsList.push({ id: doc.id, ...doc.data() } as Training);
       });
 
-      if (trainingsToDelete.length > 0) {
-        console.log(`Deletando ${trainingsToDelete.length} treinos órfãos em paralelo...`);
+      // If the list is empty and we have a selected athlete, check if we need to seed the INITIAL_TRAININGS
+      const isSeededKey = `corrida_tracker_seeded_${currentUser.uid}`;
+      const isSeeded = localStorage.getItem(isSeededKey);
+      
+      if (trainingsList.length === 0 && selectedUserId && !isSeeded) {
+        console.log('No trainings found for this owner. Seeding initial trainings...');
+        localStorage.setItem(isSeededKey, 'true');
         try {
-          await Promise.all(trainingsToDelete.map(id => deleteDoc(doc(db, 'trainings', id))));
-        } catch (err) {
-          console.error('Error deleting orphaned trainings:', err);
-        }
-      }
-
-      // Check if user-deborah has any trainings in Firestore. If she doesn't, seed INITIAL_TRAININGS so they exist as actual Firestore documents
-      const deborahTrainings = trainingsList.filter(t => t.userId === 'user-deborah');
-      if (deborahTrainings.length === 0) {
-        console.log('No trainings found for Déborah Braga in Firestore. Seeding INITIAL_TRAININGS...');
-        try {
-          const seedTrainingPromises = INITIAL_TRAININGS.map(t => 
-            setDoc(doc(db, 'trainings', t.id), {
-              userId: 'user-deborah',
+          const seedTrainingPromises = INITIAL_TRAININGS.map(t => {
+            const newTrainingId = `t-${currentUser.uid}-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+            return setDoc(doc(db, 'trainings', newTrainingId), {
+              userId: selectedUserId,
               week: t.week,
               description: t.description,
               dayOfWeek: t.dayOfWeek,
               plannedKm: t.plannedKm,
               completedKm: t.completedKm,
               done: t.done,
-              notes: t.notes || ''
-            })
-          );
+              notes: t.notes || '',
+              ownerId: currentUser.uid
+            });
+          });
           await Promise.all(seedTrainingPromises);
-          // Once the write completes, onSnapshot will fire again with the new seeded workouts
           return;
         } catch (err) {
-          console.error('Error seeding trainings for Déborah Braga:', err);
+          console.error('Error seeding trainings for user:', err);
         }
       }
 
@@ -168,23 +159,26 @@ export default function App() {
       unsubscribeUsers();
       unsubscribeTrainings();
     };
-  }, []);
+  }, [currentUser, selectedUserId]);
 
   // Save selected user to localStorage
   useEffect(() => {
-    if (selectedUserId) {
-      localStorage.setItem(LOCAL_STORAGE_ACTIVE_USER_KEY, selectedUserId);
+    if (currentUser && selectedUserId) {
+      const storedActiveUserKey = `${LOCAL_STORAGE_ACTIVE_USER_KEY}_${currentUser.uid}`;
+      localStorage.setItem(storedActiveUserKey, selectedUserId);
     }
-  }, [selectedUserId]);
+  }, [currentUser, selectedUserId]);
 
   // Action: Add new athlete user
   const handleAddUser = async (name: string) => {
+    if (!currentUser) return;
     const randomGradient = AVATAR_GRADIENTS[Math.floor(Math.random() * AVATAR_GRADIENTS.length)];
     const newUserId = `user-${Date.now()}`;
     try {
       await setDoc(doc(db, 'users', newUserId), {
         name,
         avatarColor: randomGradient,
+        ownerId: currentUser.uid
       });
       setSelectedUserId(newUserId); // auto-select newly created athlete
     } catch (err) {
@@ -217,6 +211,7 @@ export default function App() {
 
   // Action: Add new training workout
   const handleAddTraining = async (newTrainingData: Omit<Training, 'id' | 'userId'>) => {
+    if (!currentUser) return;
     const newTrainingId = `t-${Date.now()}`;
     try {
       await setDoc(doc(db, 'trainings', newTrainingId), {
@@ -227,7 +222,8 @@ export default function App() {
         plannedKm: newTrainingData.plannedKm,
         completedKm: newTrainingData.completedKm,
         done: newTrainingData.done,
-        notes: newTrainingData.notes || ''
+        notes: newTrainingData.notes || '',
+        ownerId: currentUser.uid
       });
     } catch (err) {
       console.error('Error adding training to Firestore:', err);
@@ -259,12 +255,27 @@ export default function App() {
   };
 
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-brand-bg text-white font-mono">
+        <div className="text-center">
+          <Activity size={32} className="text-brand-neon animate-pulse mx-auto mb-4" />
+          <p className="text-xs uppercase tracking-widest opacity-60">Iniciando conexão...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <AuthScreen onAuthSuccess={() => {}} />;
+  }
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-brand-bg text-white font-mono">
         <div className="text-center">
           <Activity size={32} className="text-brand-neon animate-pulse mx-auto mb-4" />
-          <p className="text-xs uppercase tracking-widest opacity-60">Carregando planilha...</p>
+          <p className="text-xs uppercase tracking-widest opacity-60">Sincronizando treinos com a nuvem...</p>
         </div>
       </div>
     );
@@ -291,32 +302,54 @@ export default function App() {
             </div>
           </div>
 
-          {/* Core Tab Switches - High Contrast Mono Style */}
-          <div className="flex bg-white/5 p-1 border border-white/10 self-start md:self-center">
-            <button
-              id="tab-planilha-btn"
-              onClick={() => setActiveTab('planilha')}
-              className={`flex items-center gap-2 px-4 py-2 font-mono text-xs uppercase tracking-widest transition-all cursor-pointer ${
-                activeTab === 'planilha'
-                  ? 'bg-brand-neon text-black font-bold'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <Calendar size={13} />
-              <span>Planilha</span>
-            </button>
-            <button
-              id="tab-graficos-btn"
-              onClick={() => setActiveTab('graficos')}
-              className={`flex items-center gap-2 px-4 py-2 font-mono text-xs uppercase tracking-widest transition-all cursor-pointer ${
-                activeTab === 'graficos'
-                  ? 'bg-brand-neon text-black font-bold'
-                  : 'text-white/60 hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <BarChart3 size={13} />
-              <span>Estatísticas</span>
-            </button>
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 self-start md:self-center">
+            {/* Core Tab Switches - High Contrast Mono Style */}
+            <div className="flex bg-white/5 p-1 border border-white/10">
+              <button
+                id="tab-planilha-btn"
+                onClick={() => setActiveTab('planilha')}
+                className={`flex items-center gap-2 px-4 py-2 font-mono text-xs uppercase tracking-widest transition-all cursor-pointer ${
+                  activeTab === 'planilha'
+                    ? 'bg-brand-neon text-black font-bold'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <Calendar size={13} />
+                <span>Planilha</span>
+              </button>
+              <button
+                id="tab-graficos-btn"
+                onClick={() => setActiveTab('graficos')}
+                className={`flex items-center gap-2 px-4 py-2 font-mono text-xs uppercase tracking-widest transition-all cursor-pointer ${
+                  activeTab === 'graficos'
+                    ? 'bg-brand-neon text-black font-bold'
+                    : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <BarChart3 size={13} />
+                <span>Estatísticas</span>
+              </button>
+            </div>
+
+            {/* User Account Info & Logout */}
+            <div className="flex items-center gap-3 sm:border-l sm:border-white/10 sm:pl-4 h-9">
+              <div className="text-left hidden md:block">
+                <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-white">
+                  {currentUser.displayName || 'Atleta'}
+                </p>
+                <p className="text-[8px] font-mono text-white/45 lowercase">
+                  {currentUser.email}
+                </p>
+              </div>
+              <button
+                id="logout-btn"
+                onClick={() => signOut(auth)}
+                className="p-2.5 text-white/40 hover:text-red-400 hover:bg-red-950/20 border border-transparent hover:border-red-900/30 transition-all cursor-pointer"
+                title="Sair da Conta"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -332,6 +365,7 @@ export default function App() {
           onAddUser={handleAddUser}
           onDeleteUser={handleDeleteUser}
         />
+
 
         {/* Dynamic Tab Switching Content rendering */}
         <div className="mt-4">
