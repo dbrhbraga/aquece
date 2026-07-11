@@ -10,6 +10,7 @@ interface TrainingListProps {
   onUpdateTraining: (id: string, fieldOrFields: keyof Training | Partial<Training>, value?: any) => void;
   onDeleteTraining: (id: string) => void;
   onAddTraining: (training: Omit<Training, 'id' | 'userId'>) => void;
+  isReadOnly?: boolean;
 }
 
 const PRESETS = [
@@ -26,6 +27,7 @@ export default function TrainingList({
   onUpdateTraining,
   onDeleteTraining,
   onAddTraining,
+  isReadOnly = false,
 }: TrainingListProps) {
   // Filter states
   const [selectedWeekFilter, setSelectedWeekFilter] = useState<string>('all');
@@ -168,7 +170,7 @@ export default function TrainingList({
         </div>
 
         {/* Add Training Trigger Button */}
-        {!isAdding && (
+        {!isReadOnly && !isAdding && (
           <button
             id="btn-add-training-trigger"
             onClick={handleOpenAddForm}
@@ -182,7 +184,7 @@ export default function TrainingList({
 
       {/* Add Training Form Panel */}
       <AnimatePresence>
-        {isAdding && (
+        {!isReadOnly && isAdding && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -423,6 +425,7 @@ export default function TrainingList({
                         training={workout}
                         onUpdate={onUpdateTraining}
                         onDelete={onDeleteTraining}
+                        isReadOnly={isReadOnly}
                       />
                     ))}
                   </div>

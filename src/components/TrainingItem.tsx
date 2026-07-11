@@ -8,9 +8,10 @@ interface TrainingItemProps {
   onUpdate: (id: string, fieldOrFields: keyof Training | Partial<Training>, value?: any) => void;
   onDelete: (id: string) => void;
   key?: string | number;
+  isReadOnly?: boolean;
 }
 
-export default function TrainingItem({ training, onUpdate, onDelete }: TrainingItemProps) {
+export default function TrainingItem({ training, onUpdate, onDelete, isReadOnly = false }: TrainingItemProps) {
   const [showNotes, setShowNotes] = useState(false);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [notesText, setNotesText] = useState(training.notes || '');
@@ -238,13 +239,16 @@ export default function TrainingItem({ training, onUpdate, onDelete }: TrainingI
             <div className="flex items-start gap-4 flex-1">
               <button
                 id={`toggle-done-${training.id}`}
-                onClick={handleToggleDone}
-                className={`mt-1 flex-shrink-0 w-6 h-6 rounded-none flex items-center justify-center border-2 transition-all duration-150 cursor-pointer ${
+                onClick={isReadOnly ? undefined : handleToggleDone}
+                disabled={isReadOnly}
+                className={`mt-1 flex-shrink-0 w-6 h-6 rounded-none flex items-center justify-center border-2 transition-all duration-150 ${
+                  isReadOnly ? 'cursor-not-allowed opacity-65' : 'cursor-pointer hover:border-brand-neon hover:scale-105'
+                } ${
                   training.done
                     ? 'bg-brand-neon border-brand-neon text-black font-black'
-                    : 'border-white/30 hover:border-brand-neon hover:scale-105'
+                    : 'border-white/30'
                 }`}
-                title={training.done ? "Marcar como não feito" : "Marcar como feito"}
+                title={isReadOnly ? (training.done ? "Feito" : "Não feito") : (training.done ? "Marcar como não feito" : "Marcar como feito")}
               >
                 {training.done && <Check size={14} strokeWidth={3} />}
               </button>
@@ -279,37 +283,39 @@ export default function TrainingItem({ training, onUpdate, onDelete }: TrainingI
 
             {/* Right Side: Kilometers Completed Selector & Controls */}
             <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto pt-4 sm:pt-0 border-t sm:border-t-0 border-white/5">
-              <div className="flex flex-col items-start sm:items-end gap-1">
-                <span className="text-[9px] font-mono font-bold text-white/40 uppercase tracking-[0.2em]">
-                  Kms Feitos
-                </span>
-                <div className="flex items-center border border-white/20 rounded-none bg-[#0F1113] overflow-hidden shadow-md h-10">
-                  <button
-                    id={`km-dec-${training.id}`}
-                    onClick={() => adjustKm(-0.5)}
-                    className="w-9 h-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/5 active:bg-white/10 transition-colors border-r border-white/10 cursor-pointer font-bold"
-                  >
-                    -
-                  </button>
-                  <input
-                    id={`km-input-${training.id}`}
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={training.completedKm || ''}
-                    onChange={(e) => handleKmChange(e.target.value)}
-                    placeholder="0"
-                    className="w-12 h-full text-center text-sm font-bold text-white focus:outline-none bg-transparent font-mono"
-                  />
-                  <button
-                    id={`km-inc-${training.id}`}
-                    onClick={() => adjustKm(0.5)}
-                    className="w-9 h-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/5 active:bg-white/10 transition-colors border-l border-white/10 cursor-pointer font-bold"
-                  >
-                    +
-                  </button>
+              {!isReadOnly && (
+                <div className="flex flex-col items-start sm:items-end gap-1">
+                  <span className="text-[9px] font-mono font-bold text-white/40 uppercase tracking-[0.2em]">
+                    Kms Feitos
+                  </span>
+                  <div className="flex items-center border border-white/20 rounded-none bg-[#0F1113] overflow-hidden shadow-md h-10">
+                    <button
+                      id={`km-dec-${training.id}`}
+                      onClick={() => adjustKm(-0.5)}
+                      className="w-9 h-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/5 active:bg-white/10 transition-colors border-r border-white/10 cursor-pointer font-bold"
+                    >
+                      -
+                    </button>
+                    <input
+                      id={`km-input-${training.id}`}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={training.completedKm || ''}
+                      onChange={(e) => handleKmChange(e.target.value)}
+                      placeholder="0"
+                      className="w-12 h-full text-center text-sm font-bold text-white focus:outline-none bg-transparent font-mono"
+                    />
+                    <button
+                      id={`km-inc-${training.id}`}
+                      onClick={() => adjustKm(0.5)}
+                      className="w-9 h-full flex items-center justify-center text-white/60 hover:text-white hover:bg-white/5 active:bg-white/10 transition-colors border-l border-white/10 cursor-pointer font-bold"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Action buttons (Show Notes / Delete) */}
               <div className="flex items-center gap-1.5 self-end sm:self-center">
@@ -335,14 +341,16 @@ export default function TrainingItem({ training, onUpdate, onDelete }: TrainingI
                   </div>
                 ) : (
                   <>
-                    <button
-                      id={`edit-fields-btn-${training.id}`}
-                      onClick={startEditing}
-                      className="p-2.5 text-white/40 hover:text-brand-neon hover:bg-brand-neon/5 rounded-none border border-transparent hover:border-brand-neon/30 transition-all cursor-pointer"
-                      title="Editar treino completo"
-                    >
-                      <Edit2 size={15} />
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        id={`edit-fields-btn-${training.id}`}
+                        onClick={startEditing}
+                        className="p-2.5 text-white/40 hover:text-brand-neon hover:bg-brand-neon/5 rounded-none border border-transparent hover:border-brand-neon/30 transition-all cursor-pointer"
+                        title="Editar treino completo"
+                      >
+                        <Edit2 size={15} />
+                      </button>
+                    )}
 
                     <button
                       id={`toggle-notes-${training.id}`}
@@ -362,14 +370,16 @@ export default function TrainingItem({ training, onUpdate, onDelete }: TrainingI
                       <FileText size={15} />
                     </button>
 
-                    <button
-                      id={`delete-training-${training.id}`}
-                      onClick={() => setIsConfirmingDelete(true)}
-                      className="p-2.5 text-white/40 hover:text-red-400 hover:bg-red-950/30 rounded-none border border-transparent hover:border-red-900/30 transition-all cursor-pointer"
-                      title="Excluir treino"
-                    >
-                      <Trash2 size={15} />
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        id={`delete-training-${training.id}`}
+                        onClick={() => setIsConfirmingDelete(true)}
+                        className="p-2.5 text-white/40 hover:text-red-400 hover:bg-red-950/30 rounded-none border border-transparent hover:border-red-900/30 transition-all cursor-pointer"
+                        title="Excluir treino"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -383,7 +393,7 @@ export default function TrainingItem({ training, onUpdate, onDelete }: TrainingI
                 <span className="text-[9px] font-mono font-bold text-white/45 uppercase tracking-widest">
                   Anotações do Treino
                 </span>
-                {!isEditingNotes && (
+                {!isEditingNotes && !isReadOnly && (
                   <button
                     id={`edit-notes-btn-${training.id}`}
                     onClick={() => setIsEditingNotes(true)}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { User, Training } from './types';
+import { User, Training, GroupMember } from './types';
 import { INITIAL_USERS, INITIAL_TRAININGS } from './data';
 import UserSelector from './components/UserSelector';
 import TrainingList from './components/TrainingList';
@@ -15,7 +15,8 @@ import {
   deleteDoc, 
   updateDoc,
   query,
-  where
+  where,
+  getDocs
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { db, auth } from './firebase';
@@ -41,6 +42,7 @@ export default function App() {
   const [users, setUsers] = useState<User[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [trainings, setTrainings] = useState<Training[]>([]);
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
   const [activeTab, setActiveTab] = useState<'planilha' | 'graficos'>('planilha');
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -72,15 +74,16 @@ export default function App() {
       return;
     }
 
-    // 1. Subscribe to Users belonging to the current user
-    const qUsers = query(collection(db, 'users'), where('ownerId', '==', currentUser.uid));
+    // 1. Subscribe to Users globally
+    const qUsers = query(collection(db, 'users'));
     const unsubscribeUsers = onSnapshot(qUsers, async (snapshot) => {
       const usersList: User[] = [];
       snapshot.forEach((doc) => {
         usersList.push({ id: doc.id, ...doc.data() } as User);
       });
 
-      if (usersList.length === 0) {
+      const userOwnedProfiles = usersList.filter(u => u.ownerId === currentUser.uid);
+      if (userOwnedProfiles.length === 0) {
         console.log('No athlete profiles found for this user. Creating default profile...');
         try {
           const defaultAthleteId = `user-athlete-${currentUser.uid}`;
@@ -105,7 +108,7 @@ export default function App() {
             if (storedActiveUser && usersList.some(u => u.id === storedActiveUser)) {
               return storedActiveUser;
             }
-            return usersList[0]?.id || '';
+            return userOwnedProfiles[0]?.id || usersList[0]?.id || '';
           }
           return currentId;
         });
@@ -114,8 +117,13 @@ export default function App() {
       console.error('Error listening to users collection:', error);
     });
 
-    // 2. Subscribe to Trainings belonging to the current user
-    const qTrainings = query(collection(db, 'trainings'), where('ownerId', '==', currentUser.uid));
+    // 2. Subscribe to Trainings for the selected athlete
+    let qTrainings;
+    if (selectedUserId) {
+      qTrainings = query(collection(db, 'trainings'), where('userId', '==', selectedUserId));
+    } else {
+      qTrainings = query(collection(db, 'trainings'), where('ownerId', '==', currentUser.uid));
+    }
     const unsubscribeTrainings = onSnapshot(qTrainings, async (snapshot) => {
       const trainingsList: Training[] = [];
       snapshot.forEach((doc) => {
@@ -123,11 +131,11 @@ export default function App() {
       });
 
       // If the list is empty and we have a selected athlete, check if we need to seed the INITIAL_TRAININGS
-      const isSeededKey = `corrida_tracker_seeded_${currentUser.uid}`;
+      const isSeededKey = `corrida_tracker_seeded_${currentUser.uid}_${selectedUserId}`;
       const isSeeded = localStorage.getItem(isSeededKey);
       
       if (trainingsList.length === 0 && selectedUserId && !isSeeded) {
-        console.log('No trainings found for this owner. Seeding initial trainings...');
+        console.log('No trainings found for this athlete. Seeding initial trainings...');
         localStorage.setItem(isSeededKey, 'true');
         try {
           const seedTrainingPromises = INITIAL_TRAININGS.map(t => {
@@ -156,9 +164,22 @@ export default function App() {
       console.error('Error listening to trainings collection:', error);
     });
 
+    // 3. Subscribe to Group Members globally to enable multi-user interaction
+    const qMembers = query(collection(db, 'group_members'));
+    const unsubscribeMembers = onSnapshot(qMembers, (snapshot) => {
+      const membersList: GroupMember[] = [];
+      snapshot.forEach((doc) => {
+        membersList.push({ id: doc.id, ...doc.data() } as GroupMember);
+      });
+      setGroupMembers(membersList);
+    }, (error) => {
+      console.error('Error listening to group_members collection:', error);
+    });
+
     return () => {
       unsubscribeUsers();
       unsubscribeTrainings();
+      unsubscribeMembers();
     };
   }, [currentUser, selectedUserId]);
 
@@ -222,10 +243,133 @@ export default function App() {
     }
   };
 
+  // Action: Add new group member (defaults to pending)
+  const handleAddGroupMember = async (groupId: string, name: string, athleteId?: string) => {
+    if (!currentUser) return;
+    const newMemberId = `member-${Date.now()}`;
+    try {
+      await setDoc(doc(db, 'group_members', newMemberId), {
+        groupId,
+        name,
+        athleteId: athleteId || '',
+        status: 'pending',
+        ownerId: currentUser.uid
+      });
+    } catch (err) {
+      console.error('Error adding group member:', err);
+    }
+  };
+
+  // Helper to aggregate stats from all clones of a group training and update the group's training
+  const updateGroupTrainingStats = async (groupTrainingId: string) => {
+    try {
+      const q = query(collection(db, 'trainings'), where('groupTrainingId', '==', groupTrainingId));
+      const snapshot = await getDocs(q);
+      
+      let totalPlannedKm = 0;
+      let totalCompletedKm = 0;
+      let doneCount = 0;
+      let totalCount = 0;
+      
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as Training;
+        if (data.userId !== data.parentGroupId) {
+          totalPlannedKm += data.plannedKm || 0;
+          totalCompletedKm += data.completedKm || 0;
+          totalCount += 1;
+          if (data.done) {
+            doneCount += 1;
+          }
+        }
+      });
+      
+      if (totalCount > 0) {
+        await updateDoc(doc(db, 'trainings', groupTrainingId), {
+          plannedKm: totalPlannedKm,
+          completedKm: totalCompletedKm,
+          done: doneCount === totalCount && totalCount > 0
+        });
+      } else {
+        await updateDoc(doc(db, 'trainings', groupTrainingId), {
+          completedKm: 0,
+          done: false
+        });
+      }
+    } catch (err) {
+      console.error('Error updating group training stats:', err);
+    }
+  };
+
+  // Action: Accept group member
+  const handleAcceptGroupMember = async (memberId: string) => {
+    try {
+      await updateDoc(doc(db, 'group_members', memberId), {
+        status: 'accepted'
+      });
+
+      const member = groupMembers.find(m => m.id === memberId);
+      if (member && member.groupId && member.athleteId) {
+        const groupTrainings = trainings.filter(t => t.userId === member.groupId);
+        const copyPromises = groupTrainings.map(async (gt) => {
+          const athleteHasIt = trainings.some(t => t.userId === member.athleteId && t.groupTrainingId === gt.id);
+          if (athleteHasIt) return;
+
+          const replicatedTrainingId = `t-${Date.now()}-${member.athleteId}-${gt.id}`;
+          const baseline = gt.baselinePlannedKm || gt.plannedKm;
+          
+          await setDoc(doc(db, 'trainings', replicatedTrainingId), {
+            userId: member.athleteId,
+            week: gt.week,
+            description: gt.description,
+            dayOfWeek: gt.dayOfWeek,
+            plannedKm: baseline,
+            completedKm: 0,
+            done: false,
+            notes: gt.notes || '',
+            ownerId: member.ownerId || currentUser?.uid,
+            parentGroupId: member.groupId,
+            groupTrainingId: gt.id,
+            baselinePlannedKm: baseline
+          });
+          
+          await updateGroupTrainingStats(gt.id);
+        });
+        await Promise.all(copyPromises);
+      }
+    } catch (err) {
+      console.error('Error accepting group member:', err);
+    }
+  };
+
+  // Action: Decline or delete group member
+  const handleDeclineGroupMember = async (memberId: string) => {
+    try {
+      const member = groupMembers.find(m => m.id === memberId);
+      await deleteDoc(doc(db, 'group_members', memberId));
+
+      if (member && member.groupId && member.athleteId) {
+        const copiedTrainings = trainings.filter(t => t.userId === member.athleteId && t.parentGroupId === member.groupId);
+        await Promise.all(copiedTrainings.map(t => deleteDoc(doc(db, 'trainings', t.id))));
+
+        const uniqueGroupTrainingIds = Array.from(new Set(copiedTrainings.map(t => t.groupTrainingId).filter(Boolean))) as string[];
+        await Promise.all(uniqueGroupTrainingIds.map(gtId => updateGroupTrainingStats(gtId)));
+      }
+    } catch (err) {
+      console.error('Error declining group member:', err);
+    }
+  };
+
   // Action: Add new training workout
   const handleAddTraining = async (newTrainingData: Omit<Training, 'id' | 'userId'>) => {
     if (!currentUser) return;
+    const activeProfile = users.find(u => u.id === selectedUserId);
+    if (activeProfile?.ownerId !== currentUser.uid) {
+      console.error('Tentativa não autorizada de adicionar treino.');
+      return;
+    }
     const newTrainingId = `t-${Date.now()}`;
+    const isGroup = activeProfile?.type === 'grupo';
+
     try {
       await setDoc(doc(db, 'trainings', newTrainingId), {
         userId: selectedUserId,
@@ -236,8 +380,37 @@ export default function App() {
         completedKm: newTrainingData.completedKm,
         done: newTrainingData.done,
         notes: newTrainingData.notes || '',
-        ownerId: currentUser.uid
+        ownerId: currentUser.uid,
+        ...(isGroup ? { 
+          parentGroupId: selectedUserId, 
+          groupTrainingId: newTrainingId,
+          baselinePlannedKm: newTrainingData.plannedKm
+        } : {})
       });
+
+      if (isGroup) {
+        const acceptedMembers = groupMembers.filter(m => m.groupId === selectedUserId && m.status === 'accepted');
+        const replicationPromises = acceptedMembers.map((member) => {
+          if (!member.athleteId) return Promise.resolve();
+          const replicatedTrainingId = `t-${Date.now()}-${member.athleteId}`;
+          return setDoc(doc(db, 'trainings', replicatedTrainingId), {
+            userId: member.athleteId,
+            week: newTrainingData.week,
+            description: newTrainingData.description,
+            dayOfWeek: newTrainingData.dayOfWeek,
+            plannedKm: newTrainingData.plannedKm,
+            completedKm: newTrainingData.completedKm,
+            done: newTrainingData.done,
+            notes: newTrainingData.notes || '',
+            ownerId: member.ownerId || currentUser.uid,
+            parentGroupId: selectedUserId,
+            groupTrainingId: newTrainingId,
+            baselinePlannedKm: newTrainingData.plannedKm
+          });
+        });
+        await Promise.all(replicationPromises);
+        await updateGroupTrainingStats(newTrainingId);
+      }
     } catch (err) {
       console.error('Error adding training to Firestore:', err);
     }
@@ -246,12 +419,26 @@ export default function App() {
   // Action: Update training properties (supports single field or multiple fields via object)
   const handleUpdateTraining = async (id: string, fieldOrFields: keyof Training | Partial<Training>, value?: any) => {
     try {
+      const trainingObj = trainings.find(t => t.id === id);
+      if (!trainingObj) return;
+
+      const profileOwner = users.find(u => u.id === trainingObj.userId)?.ownerId;
+      if (profileOwner !== currentUser?.uid) {
+        console.error('Tentativa não autorizada de editar treino.');
+        return;
+      }
+
+      let updatedFields: Partial<Training> = {};
       if (typeof fieldOrFields === 'object') {
-        await updateDoc(doc(db, 'trainings', id), fieldOrFields);
+        updatedFields = { ...fieldOrFields };
       } else {
-        await updateDoc(doc(db, 'trainings', id), {
-          [fieldOrFields]: value
-        });
+        updatedFields = { [fieldOrFields]: value };
+      }
+
+      await updateDoc(doc(db, 'trainings', id), updatedFields);
+
+      if (trainingObj.groupTrainingId) {
+        await updateGroupTrainingStats(trainingObj.groupTrainingId);
       }
     } catch (err) {
       console.error('Error updating training in Firestore:', err);
@@ -261,7 +448,23 @@ export default function App() {
   // Action: Delete training
   const handleDeleteTraining = async (id: string) => {
     try {
+      const trainingToDelete = trainings.find(t => t.id === id);
+      if (!trainingToDelete) return;
+
+      const profileOwner = users.find(u => u.id === trainingToDelete.userId)?.ownerId;
+      if (profileOwner !== currentUser?.uid) {
+        console.error('Tentativa não autorizada de remover treino.');
+        return;
+      }
+
       await deleteDoc(doc(db, 'trainings', id));
+
+      if (trainingToDelete.userId && users.find(u => u.id === trainingToDelete.userId)?.type === 'grupo') {
+        const replicatedTrainings = trainings.filter(t => t.groupTrainingId === id);
+        await Promise.all(replicatedTrainings.map(t => deleteDoc(doc(db, 'trainings', t.id))));
+      } else if (trainingToDelete.groupTrainingId) {
+        await updateGroupTrainingStats(trainingToDelete.groupTrainingId);
+      }
     } catch (err) {
       console.error('Error deleting training from Firestore:', err);
     }
@@ -378,6 +581,11 @@ export default function App() {
           onAddUser={handleAddUser}
           onDeleteUser={handleDeleteUser}
           onUpdateUser={handleUpdateUser}
+          groupMembers={groupMembers}
+          onAddGroupMember={handleAddGroupMember}
+          onAcceptGroupMember={handleAcceptGroupMember}
+          onDeclineGroupMember={handleDeclineGroupMember}
+          currentUserId={currentUser?.uid}
         />
 
 
@@ -395,6 +603,7 @@ export default function App() {
                 onUpdateTraining={handleUpdateTraining}
                 onDeleteTraining={handleDeleteTraining}
                 onAddTraining={handleAddTraining}
+                isReadOnly={users.find(u => u.id === selectedUserId)?.ownerId !== currentUser?.uid}
               />
             </motion.div>
           )}

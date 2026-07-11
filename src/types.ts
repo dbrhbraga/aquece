@@ -8,6 +8,15 @@ export interface User {
   weeklyVolumeTarget?: number;
 }
 
+export interface GroupMember {
+  id: string;
+  groupId: string;
+  name: string;
+  status: 'pending' | 'accepted';
+  ownerId?: string;
+  athleteId?: string;
+}
+
 export interface Training {
   id: string;
   userId: string;
@@ -19,4 +28,7 @@ export interface Training {
   done: boolean;
   notes?: string;
   ownerId?: string;
+  groupTrainingId?: string;
+  parentGroupId?: string;
+  baselinePlannedKm?: number;
 }
